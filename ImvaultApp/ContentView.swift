@@ -13,7 +13,7 @@ struct ContentView: View {
     @State private var loadState: LoadState = .loading
     @State private var selection: Set<Int> = []
     @State private var searchText: String = ""
-    @State private var showingExportPlaceholder = false
+    @State private var showingExportSheet = false
     @State private var sidecarVersion: String?
 
     var body: some View {
@@ -29,10 +29,14 @@ struct ContentView: View {
             sidecarVersion = try? await IMVaultCLI.version()
             await loadChats()
         }
-        .alert("Export coming in Phase 4b", isPresented: $showingExportPlaceholder) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("The export sheet (output path + password + progress) lands in Phase 4b. For now you can run from Terminal:\n\nimvault export \(selection.sorted().map { "--chat \($0)" }.joined(separator: " "))")
+        .sheet(isPresented: $showingExportSheet) {
+            if case .loaded(let chats) = loadState {
+                ExportSheet(
+                    chats: chats,
+                    selectedChatIDs: selection.sorted(),
+                    onDismiss: { showingExportSheet = false }
+                )
+            }
         }
     }
 
@@ -71,7 +75,7 @@ struct ContentView: View {
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Button {
-                showingExportPlaceholder = true
+                showingExportSheet = true
             } label: {
                 Label(
                     selection.isEmpty
