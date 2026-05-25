@@ -97,6 +97,20 @@ if [ ! -x "$IMVAULT_BIN" ]; then
     exit 1
 fi
 
+# --- Replace entry-point shebang with a relocatable wrapper ------------------
+# pip bakes the build-time absolute path into the shebang (e.g.
+# "#!/tmp/.../build/python-runtime/bin/python3"). That path exists during the
+# build but is brittle: even when it's still on disk, Foundation's Process
+# refuses to launch a script whose interpreter lives outside the .app bundle
+# when the .app is launched via LaunchServices. Replace with a bash wrapper
+# that resolves python3 relative to its own location.
+cat > "$IMVAULT_BIN" <<'WRAPPER'
+#!/bin/bash
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "${HERE}/python3" -m imvault.cli "$@"
+WRAPPER
+chmod +x "$IMVAULT_BIN"
+
 # --- Smoke test --------------------------------------------------------------
 
 INSTALLED_VERSION="$("$IMVAULT_BIN" --version 2>&1 | awk '{print $NF}')"
