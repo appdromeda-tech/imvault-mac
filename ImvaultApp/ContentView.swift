@@ -1,3 +1,4 @@
+import Contacts
 import SwiftUI
 
 struct ContentView: View {
@@ -9,14 +10,20 @@ struct ContentView: View {
         case failure(String)
     }
 
+    let contactsStatus: CNAuthorizationStatus
+
     @State private var result: SmokeResult = .idle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("imvault")
                 .font(.largeTitle)
-            Text("Phase 2b — sidecar smoke test")
+            Text("Sidecar smoke test")
                 .foregroundStyle(.secondary)
+
+            if shouldShowContactsBanner {
+                contactsBanner
+            }
 
             HStack(spacing: 12) {
                 Button("Check sidecar version") {
@@ -40,6 +47,25 @@ struct ContentView: View {
     private var isLoading: Bool {
         if case .loading = result { return true }
         return false
+    }
+
+    private var shouldShowContactsBanner: Bool {
+        contactsStatus == .denied || contactsStatus == .restricted
+    }
+
+    @ViewBuilder private var contactsBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading) {
+                Text("Contacts access not granted").bold()
+                Text("Conversations and exports will show phone numbers and emails instead of contact names. Enable in System Settings → Privacy & Security → Contacts and relaunch.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder private var resultView: some View {
@@ -91,19 +117,7 @@ struct ContentView: View {
             Text(message)
                 .font(.system(.body, design: .monospaced))
                 .textSelection(.enabled)
-            if looksLikeFDA(message) {
-                Text("imvault needs Full Disk Access to read iMessage history. Grant it in System Settings → Privacy & Security → Full Disk Access, then quit and relaunch.")
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-            }
         }
-    }
-
-    private func looksLikeFDA(_ message: String) -> Bool {
-        let lower = message.lowercased()
-        return lower.contains("permission denied")
-            || lower.contains("operation not permitted")
-            || lower.contains("chat.db")
     }
 
     @MainActor
@@ -130,5 +144,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(contactsStatus: .authorized)
 }

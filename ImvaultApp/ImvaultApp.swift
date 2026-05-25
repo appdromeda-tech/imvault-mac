@@ -4,7 +4,7 @@ import SwiftUI
 struct ImvaultApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }
