@@ -29,3 +29,13 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
+    postBuildScripts:
+      - name: Bundle Python sidecar
+        script: |
+          set -euo pipefail
+          "${SRCROOT}/scripts/build-sidecar.sh"
+          RUNTIME_SRC="${SRCROOT}/build/python-runtime"
+          RUNTIME_DST="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources/python-runtime"
+          mkdir -p "$(dirname "${RUNTIME_DST}")"
+          rsync -a --delete "${RUNTIME_SRC}/" "${RUNTIME_DST}/"
+        showEnvVarsInLog: false
