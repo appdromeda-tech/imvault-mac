@@ -1,0 +1,31 @@
+name: ImvaultApp
+options:
+  bundleIdPrefix: com.appdromeda
+  deploymentTarget:
+    macOS: "14.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 42WA4984A7
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  ImvaultApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: ImvaultApp
+        excludes:
+          - "Info.plist"
+          - "ImvaultApp.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.appdromeda.imvault
+        PRODUCT_NAME: imvault
+        INFOPLIST_FILE: ImvaultApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ImvaultApp/ImvaultApp.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
