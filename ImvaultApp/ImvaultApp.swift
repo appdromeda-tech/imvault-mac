@@ -16,5 +16,15 @@ struct ImvaultApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
         }
+
+        // Archive viewer — each open .imv gets its own resizable window.
+        // The UUID parameter looks up a live session in `ViewerStore.shared`;
+        // the password never enters the window-restoration state stream.
+        WindowGroup(id: "viewer", for: UUID.self) { $id in
+            if let id {
+                ArchiveViewerWindowContainer(id: id)
+            }
+        }
+        .defaultSize(width: 1000, height: 700)
     }
 }
