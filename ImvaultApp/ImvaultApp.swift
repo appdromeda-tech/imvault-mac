@@ -10,7 +10,7 @@ struct ImvaultApp: App {
         }
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Open Archive…") {
+                Button("Open a Backup…") {
                     NotificationCenter.default.post(name: .openArchiveRequested, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)

@@ -66,10 +66,10 @@ struct ExportSheet: View {
 
     @ViewBuilder private var configuringView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Export \(selectedChatIDs.count) conversation\(selectedChatIDs.count == 1 ? "" : "s")")
+            Text("Back up \(selectedChatIDs.count) conversation\(selectedChatIDs.count == 1 ? "" : "s")")
                 .font(.title2)
                 .bold()
-            Text("imvault encrypts the archive with Argon2id + AES-256-GCM. The password is required to open it later — there is no recovery.")
+            Text("Your backup will be encrypted with the password below. Pick a strong one — and write it down somewhere safe.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -94,6 +94,13 @@ struct ExportSheet: View {
                     SecureField("", text: $password, prompt: Text("Required"))
                 }
 
+                if !password.isEmpty {
+                    HStack(spacing: 8) {
+                        Spacer().frame(width: 100)
+                        passwordStrengthMeter
+                    }
+                }
+
                 HStack {
                     Text("Confirm:")
                         .frame(width: 100, alignment: .trailing)
@@ -112,9 +119,20 @@ struct ExportSheet: View {
             .padding(.vertical, 4)
         }
 
+        // The most important sentence in the entire app. Red, bold, hard to miss.
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "key.fill")
+                .foregroundStyle(.red)
+            Text("**Write this password down.** If you forget it, the backup can't be opened — by anyone. There is no way to recover it.")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+
         if lowDiskSpace, let free = freeSpaceOnTarget {
             warningBanner(
-                "Less than \(ExportSheet.formatBytes(free)) free on the target volume — exports of large chats may fail mid-write."
+                "Less than \(ExportSheet.formatBytes(free)) free on the target volume — backups of large chats may fail mid-write."
             )
         }
 
@@ -122,10 +140,59 @@ struct ExportSheet: View {
             Spacer()
             Button("Cancel") { onDismiss() }
                 .keyboardShortcut(.cancelAction)
-            Button("Export") { startExport() }
+            Button("Back Up") { startExport() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canExport)
         }
+    }
+
+    @ViewBuilder private var passwordStrengthMeter: some View {
+        let score = ExportSheet.passwordStrength(for: password)
+        HStack(spacing: 4) {
+            ForEach(0..<4) { i in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(i < score ? strengthColor(for: score) : Color.secondary.opacity(0.2))
+                    .frame(width: 32, height: 4)
+            }
+            Text(strengthLabel(for: score))
+                .font(.caption)
+                .foregroundStyle(strengthColor(for: score))
+                .padding(.leading, 6)
+            Spacer()
+        }
+    }
+
+    private func strengthLabel(for score: Int) -> String {
+        switch score {
+        case 0...1: return "Weak"
+        case 2: return "Fair"
+        case 3: return "Strong"
+        default: return "Very strong"
+        }
+    }
+
+    private func strengthColor(for score: Int) -> Color {
+        switch score {
+        case 0...1: return .red
+        case 2: return .orange
+        case 3: return .green
+        default: return .green
+        }
+    }
+
+    /// 0–4 score based on length + character variety. Deliberately simple —
+    /// the goal is to surface obviously weak passwords, not enforce policy.
+    static func passwordStrength(for password: String) -> Int {
+        guard !password.isEmpty else { return 0 }
+        var score = 0
+        if password.count >= 8 { score += 1 }
+        if password.count >= 12 { score += 1 }
+        if password.count >= 16 { score += 1 }
+        if password.range(of: "[A-Z]", options: .regularExpression) != nil { score += 1 }
+        if password.range(of: "[0-9]", options: .regularExpression) != nil { score += 1 }
+        if password.range(of: "[^A-Za-z0-9]", options: .regularExpression) != nil { score += 1 }
+        // Map 0-6 internal points down to 0-4 visible segments.
+        return min(score, 4)
     }
 
     @ViewBuilder private func warningBanner(_ text: String) -> some View {
@@ -149,7 +216,9 @@ struct ExportSheet: View {
 
     private func showSavePanel() {
         let panel = NSSavePanel()
-        panel.title = "Save imvault Archive"
+        panel.title = "Save Backup"
+        panel.prompt = "Save"
+        panel.message = "Choose where to save your encrypted backup."
         panel.nameFieldStringValue = outputURL.lastPathComponent
         panel.directoryURL = outputURL.deletingLastPathComponent()
         panel.canCreateDirectories = true
@@ -163,7 +232,7 @@ struct ExportSheet: View {
 
     @ViewBuilder private func runningView(progress: Double, label: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Exporting…")
+            Text("Backing up…")
                 .font(.title2)
                 .bold()
             Text(outputURL.path)
@@ -201,7 +270,7 @@ struct ExportSheet: View {
                 .foregroundStyle(.green)
                 .font(.system(size: 40))
             VStack(alignment: .leading, spacing: 4) {
-                Text("Export complete")
+                Text("Your backup has been saved")
                     .font(.title2)
                     .bold()
                 Text(url.path)
@@ -230,7 +299,7 @@ struct ExportSheet: View {
                 .foregroundStyle(.red)
                 .font(.system(size: 40))
             VStack(alignment: .leading, spacing: 4) {
-                Text("Export failed")
+                Text("Couldn't save the backup")
                     .font(.title2)
                     .bold()
                 Text(message)
@@ -327,7 +396,7 @@ struct ExportSheet: View {
         let label: String
         switch event.event {
         case .chatStarted:
-            label = "Exporting \(chatName ?? "conversation")…"
+            label = "Backing up \(chatName ?? "conversation")…"
         case .chatDone:
             label = "Finished \(chatName ?? "conversation") (\(event.processed)/\(event.total))"
         case .attachment:

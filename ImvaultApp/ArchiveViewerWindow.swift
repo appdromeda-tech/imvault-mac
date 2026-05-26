@@ -19,12 +19,12 @@ struct ArchiveViewerWindowContainer: View {
                     .foregroundStyle(.secondary)
                 Text("Viewer session ended")
                     .font(.headline)
-                Text("Re-open the archive from the main window.")
+                Text("Re-open the backup from the main window.")
                     .foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(minWidth: 480, minHeight: 240)
-            .navigationTitle("imvault Archive")
+            .navigationTitle("imvault Backup")
         }
     }
 }
@@ -40,7 +40,7 @@ struct ArchiveViewerWindow: View {
     var body: some View {
         content
             .frame(minWidth: 700, minHeight: 500)
-            .navigationTitle(session.archiveURL?.lastPathComponent ?? "imvault Archive")
+            .navigationTitle(session.archiveURL?.lastPathComponent ?? "imvault Backup")
             .onDisappear {
                 ViewerStore.shared.close(id)
             }
@@ -99,7 +99,7 @@ struct ArchiveViewerWindow: View {
                     .foregroundStyle(.red)
                     .font(.system(size: 36))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Couldn't open archive")
+                    Text("Couldn't open backup")
                         .font(.title2)
                         .bold()
                     Text(message)

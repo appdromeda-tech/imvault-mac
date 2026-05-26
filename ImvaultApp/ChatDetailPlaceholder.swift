@@ -17,9 +17,9 @@ struct ChatDetailPlaceholder: View {
                 .foregroundStyle(.secondary)
 
             if selectedCount == 0 {
-                Text("Select conversations to export")
+                Text("Select conversations to back up")
                     .font(.title2)
-                Text("Tick the boxes in the sidebar, then click **Export** in the toolbar.")
+                Text("Tick the boxes in the sidebar, then click **Back Up** in the toolbar.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
@@ -27,7 +27,7 @@ struct ChatDetailPlaceholder: View {
                 Text("\(selectedCount) of \(totalCount) selected")
                     .font(.title2)
                     .monospacedDigit()
-                Text("Click **Export \(selectedCount) selected** in the toolbar when you're ready.")
+                Text("Click **Back Up \(selectedCount) Selected** in the toolbar when you're ready.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
