@@ -72,6 +72,7 @@ The full design plan lives in `docs/mac-app-plan.md` of the CLI repo.
 - macOS 14 (Sonoma) or later
 - Xcode 15+
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
+- [create-dmg](https://github.com/create-dmg/create-dmg) — `brew install create-dmg` (only needed if you run `scripts/release.sh`)
 - ~150 MB of disk for the bundled Python runtime
 - Apple Developer Program membership (for signing). Dev team currently pinned to `42WA4984A7` in `project.yml`; change that line if building under your own team.
 
