@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build a signed, notarized, stapled .dmg of imvault. Apple Silicon only
-# for now (matches build-sidecar.sh's PYTHON_ARCH); add an x86_64 slice in
-# a polish pass.
+# (matches build-sidecar.sh's PYTHON_ARCH).
 #
 # Prerequisites (one-time):
 #   - Developer ID Application cert in a dedicated CI keychain. On this Mac,
