@@ -79,7 +79,36 @@ Pinned versions (edit in `scripts/build-sidecar.sh`):
 - **No** `com.apple.security.app-sandbox` — required so the app can read `~/Library/Messages/chat.db` directly. Full Disk Access (FDA) is a TCC permission granted by the user in System Settings, not an entitlement.
 - Hardened Runtime is on (`ENABLE_HARDENED_RUNTIME = YES`) because notarization requires it.
 
-Codesigning the individual binaries inside the bundled Python runtime (required for notarization) is **deferred to Phase 5**. Locally-built debug `.app` bundles run fine without it thanks to `disable-library-validation`.
+For Release builds, the post-build Run Script also codesigns every Mach-O inside the bundled Python runtime with Developer ID Application + hardened runtime (see `scripts/codesign-runtime.sh`). Debug builds skip this; they run fine locally thanks to `disable-library-validation`.
+
+## Building a release DMG
+
+One-time setup:
+
+- **Developer ID Application cert** in your login keychain (Xcode → Settings → Accounts → Manage Certificates → +).
+- **Re-import that cert into the `ci-signing.keychain-db`** so codesign works from non-interactive shells (login-keychain codesigning fails with `errSecInternalComponent` in script contexts — same pattern documented in [myvota-ios/docs/headless-codesign-setup.md](https://github.com/appdromeda-tech/myvota-ios/blob/main/docs/headless-codesign-setup.md)). Export the identity as a `.p12`, then:
+  ```bash
+  security unlock-keychain -p "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
+  security import ~/dev-id.p12 -k ~/Library/Keychains/ci-signing.keychain-db -P "<p12-export-password>" -T /usr/bin/codesign -T /usr/bin/security
+  security set-key-partition-list -S apple-tool:,apple: -s -k "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
+  ```
+- **Notarytool credentials** cached:
+  ```bash
+  xcrun notarytool store-credentials imvault-notary \
+    --key ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+    --key-id <KEY_ID> --issuer <ISSUER_UUID>
+  ```
+- **`CI_KEYCHAIN_PASSWORD`** exported in your shell rc.
+
+To cut a release:
+
+```bash
+export CI_KEYCHAIN_PASSWORD='...'
+./scripts/release.sh                # builds, signs, notarizes, staples, produces build/imvault-X.Y.Z.dmg
+./scripts/release.sh --skip-notarize  # same minus Apple notary submission, useful for iterating
+```
+
+The output is a Gatekeeper-accepted DMG (typically ~60 MB after compression of the 117 MB `.app`). Attach it to a GitHub release on `appdromeda-tech/imvault-mac`.
 
 ## Bundle identifier
 
