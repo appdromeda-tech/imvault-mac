@@ -6,5 +6,13 @@ struct ImvaultApp: App {
         WindowGroup {
             RootView()
         }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Open Archive…") {
+                    NotificationCenter.default.post(name: .openArchiveRequested, object: nil)
+                }
+                .keyboardShortcut("o", modifiers: .command)
+            }
+        }
     }
 }

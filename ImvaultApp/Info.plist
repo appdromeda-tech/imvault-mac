@@ -22,6 +22,13 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- The archive viewer loads http://127.0.0.1:N served by `imvault view`
+		     as a subprocess. Without this, ATS would block the HTTP load. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSContactsUsageDescription</key>
 	<string>imvault uses your contacts to show names instead of phone numbers in archived conversations.</string>
 	<key>NSHumanReadableCopyright</key>
