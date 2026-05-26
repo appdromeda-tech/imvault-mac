@@ -129,20 +129,31 @@ VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_P
 DMG_PATH="${REPO_ROOT}/build/imvault-${VERSION}.dmg"
 STAGING_DIR="${BUILD_DIR}/dmg-staging"
 
+if ! command -v create-dmg >/dev/null 2>&1; then
+    echo "[release] ERROR: create-dmg not installed. brew install create-dmg" >&2
+    exit 1
+fi
+
 rm -f "$DMG_PATH"
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_PATH" "$STAGING_DIR/"
-ln -s /Applications "$STAGING_DIR/Applications"
+# create-dmg adds the Applications shortcut itself via --app-drop-link;
+# don't pre-create one or it'll appear duplicated in the window.
 
-echo "[release] hdiutil create $DMG_PATH ..."
-hdiutil create \
-    -volname "imvault" \
-    -srcfolder "$STAGING_DIR" \
-    -ov \
-    -format UDZO \
-    -fs APFS \
-    "$DMG_PATH" >/dev/null
+echo "[release] create-dmg ..."
+create-dmg \
+    --volname "imvault" \
+    --background "${REPO_ROOT}/scripts/dmg-background.png" \
+    --window-size 600 400 \
+    --window-pos 200 120 \
+    --icon-size 128 \
+    --icon "imvault.app" 150 180 \
+    --app-drop-link 450 180 \
+    --hide-extension "imvault.app" \
+    --no-internet-enable \
+    "$DMG_PATH" \
+    "$STAGING_DIR"
 
 # --- Sign the DMG -------------------------------------------------------------
 
