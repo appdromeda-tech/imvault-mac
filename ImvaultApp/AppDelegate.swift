@@ -9,6 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Best-effort sweep of any orphaned tempdirs from a previous force-quit.
         TempDirSweeper.sweepOrphanedViewerTempDirs()
+        // Orphaned partial exports are surfaced by ContentView itself, in its
+        // .task — that lets us defer the prompt until the user is past any
+        // FDA onboarding (no point asking about ghost files behind a gate).
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Clear any lingering dock-tile state.
+        NSApp.dockTile.badgeLabel = nil
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

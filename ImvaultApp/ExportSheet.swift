@@ -261,6 +261,11 @@ struct ExportSheet: View {
         let nameLookup = chatsByID
         let handle = cancellable
 
+        // Survives an app crash / force-quit between now and the catch block:
+        // RootView's orphan check on next launch will pick this up and offer
+        // to delete the partial file.
+        PartialExportTracker.markStarted(url)
+
         // Register so the app-quit shutdown path can SIGINT us cleanly.
         registryToken = SubprocessRegistry.shared.register(
             interrupt: { handle.interrupt() },
@@ -282,14 +287,18 @@ struct ExportSheet: View {
                 )
                 await MainActor.run {
                     registryToken = nil
+                    PartialExportTracker.markFinished(url)
+                    NSApp.dockTile.badgeLabel = nil
                     phase = .completed(url)
                 }
             } catch {
                 await MainActor.run {
                     registryToken = nil
+                    NSApp.dockTile.badgeLabel = nil
                     // Best-effort cleanup of the partial output file; the
                     // CLI was either interrupted or threw mid-write.
                     try? FileManager.default.removeItem(at: url)
+                    PartialExportTracker.markFinished(url)
                     if didCancel {
                         // User asked for this — just close the sheet.
                         onDismiss()
@@ -325,6 +334,12 @@ struct ExportSheet: View {
             label = "Copying attachments (\(event.processed)/\(event.total))"
         }
         phase = .running(progress: progress, label: label)
+
+        // Surface progress on the dock tile so the user can see it from
+        // outside the app.
+        if event.total > 0 {
+            NSApp.dockTile.badgeLabel = "\(Int(progress * 100))%"
+        }
     }
 
     // MARK: - Defaults

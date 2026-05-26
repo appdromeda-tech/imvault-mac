@@ -5,15 +5,43 @@ import Foundation
 /// URL it's serving on. The UI binds to `state`; calling `stop()` (or `deinit`)
 /// terminates the subprocess.
 ///
-/// Why this is its own type (rather than a static method on IMVaultCLI):
-/// the viewer process is long-lived — it stays up for the duration of the
-/// SwiftUI view that's hosting the WKWebView. Modelling it as state makes the
-/// lifecycle obvious in the SwiftUI dependency graph.
+/// Spawns the CLI with `--no-browser --progress-json --password-fd 0` (v0.4.0+)
+/// so we get structured event lines on stderr — decrypt and extract progress
+/// for the loading UI, and a `ready` event carrying the URL once the local
+/// HTTP server is up.
 @MainActor
 final class ArchiveViewerSession: ObservableObject {
+    /// What the loading screen should display while `imvault view` is busy.
+    struct Progress: Equatable, Sendable {
+        enum Stage: Sendable {
+            case decrypting
+            case extracting
+        }
+        let stage: Stage
+        let processed: Int
+        let total: Int
+
+        var fraction: Double? {
+            total > 0 ? Double(processed) / Double(total) : nil
+        }
+
+        var label: String {
+            switch stage {
+            case .decrypting:
+                return total > 0
+                    ? "Decrypting… \(processed)/\(total)"
+                    : "Decrypting…"
+            case .extracting:
+                return total > 0
+                    ? "Extracting… \(processed)/\(total)"
+                    : "Extracting…"
+            }
+        }
+    }
+
     enum State: Equatable {
         case idle
-        case starting(detail: String)
+        case starting(Progress?)
         case ready(URL)
         case failed(String)
     }
@@ -26,17 +54,16 @@ final class ArchiveViewerSession: ObservableObject {
     deinit {
         // Deinit runs nonisolated. interrupt() is SIGINT — Python's
         // serve_forever catches KeyboardInterrupt and runs the finally block
-        // to clean up the TemporaryDirectory. AppDelegate.applicationShouldTerminate
-        // (via SubprocessRegistry) takes care of waiting for that cleanup
-        // before AppKit returns. terminate() (SIGTERM) is a last-resort
-        // fallback if SIGINT doesn't take.
+        // to clean up the TemporaryDirectory. AppDelegate (via
+        // SubprocessRegistry) takes care of waiting for that cleanup before
+        // AppKit returns. terminate() (SIGTERM) is a last-resort fallback.
         process?.interrupt()
     }
 
     func start(archive: URL, password: String) async {
         // Defensive: if a previous run is still around, tear it down first.
         await stop()
-        state = .starting(detail: "Decrypting archive…")
+        state = .starting(nil)
 
         let binary = IMVaultCLI.binaryURL
         guard FileManager.default.isExecutableFile(atPath: binary.path) else {
@@ -47,15 +74,18 @@ final class ArchiveViewerSession: ObservableObject {
         let process = Process()
         self.process = process
         process.executableURL = binary
-        process.arguments = ["view", "--password-fd", "0", archive.path]
+        process.arguments = [
+            "view",
+            "--no-browser",
+            "--progress-json",
+            "--password-fd", "0",
+            archive.path,
+        ]
 
-        // PYTHONUNBUFFERED keeps `print()` lines from sitting in the Python
-        // stdio buffer while we're scanning for the "Serving archive at …"
-        // line. BROWSER=true silences Python's webbrowser.open() so the
-        // system browser doesn't launch alongside our WKWebView.
+        // PYTHONUNBUFFERED keeps event lines from sitting in Python's stdio
+        // buffer. v0.4.0's --no-browser flag replaces the BROWSER=true hack.
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
-        env["BROWSER"] = "true"
         process.environment = env
 
         let stdoutPipe = Pipe()
@@ -65,70 +95,67 @@ final class ArchiveViewerSession: ObservableObject {
         process.standardError = stderrPipe
         process.standardInput = stdinPipe
 
-        // Scan stdout for the "Serving archive at http://…" line; once seen,
-        // resolve state to .ready(url). LineCollector below is line-buffered.
-        let stdoutCollector = LineScanner { [weak self] line in
-            guard let self else { return }
-            if let url = Self.parseServingURL(from: line) {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if case .starting = self.state {
-                        self.state = .ready(url)
-                    }
-                }
-            } else if !line.isEmpty {
-                // Surface human-readable progress like "Extracting files… 1234/5000 (24%)"
-                // so big-archive loads don't look hung.
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if case .starting = self.state {
-                        self.state = .starting(detail: line)
-                    }
-                }
-            }
-        }
+        // Stderr is the event stream now (one JSON object per line). Stdout
+        // is unused under --progress-json — drain it so the pipe buffer never
+        // fills.
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
+            }
+            // Discard.
+        }
+
+        let eventScanner = LineScanner { [weak self] line in
+            guard let self else { return }
+            guard let event = Self.parseEvent(from: line) else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.apply(event: event)
+            }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
             } else {
-                stdoutCollector.feed(data)
+                eventScanner.feed(data)
             }
         }
 
-        // Stderr is small for this command (an error line or two), so drain it
-        // synchronously in the terminationHandler instead of streaming it.
-        process.terminationHandler = { proc in
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+        process.terminationHandler = { [weak eventScanner] proc in
+            // Any tail data lingering in the stderr pipe before the OS
+            // closed it.
+            let tail = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            if !tail.isEmpty, let scanner = eventScanner {
+                scanner.feed(tail)
+                // The OS won't fire the readabilityHandler again, so make
+                // sure any unterminated final line is parsed too.
+                scanner.flush()
+            }
             let exitCode = proc.terminationStatus
+            let stderrTranscript = eventScanner?.transcriptCopy ?? ""
+
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Whichever path we're on, the subprocess is gone — release
-                // the registry slot so app-quit doesn't try to interrupt a
-                // corpse.
                 self.registryToken = nil
 
-                let trimmed = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
                 switch self.state {
                 case .ready:
-                    // We were serving and the subprocess died. If it was the
-                    // user's Close button, stop() already cleared state to
-                    // .idle; the most we'd be doing is reasserting .idle.
-                    // But if Python crashed mid-serve, surface that — a blank
-                    // WKWebView with no message is the worst outcome.
                     if exitCode == 0 || exitCode == SIGINT {
                         self.state = .idle
                     } else {
-                        let message = trimmed.isEmpty
-                            ? "Viewer ended unexpectedly (exit code \(exitCode)). Close and reopen the archive."
-                            : "Viewer ended unexpectedly:\n\(trimmed)"
-                        self.state = .failed(message)
+                        let detail = Self.extractFailureMessage(
+                            from: stderrTranscript,
+                            exitCode: exitCode
+                        )
+                        self.state = .failed("Viewer ended unexpectedly:\n\(detail)")
                     }
                 case .starting, .idle, .failed:
-                    let message = trimmed.isEmpty
-                        ? "imvault view exited with code \(exitCode)."
-                        : trimmed
+                    let message = Self.extractFailureMessage(
+                        from: stderrTranscript,
+                        exitCode: exitCode
+                    )
                     self.state = .failed(message)
                 }
             }
@@ -141,8 +168,6 @@ final class ArchiveViewerSession: ObservableObject {
             return
         }
 
-        // Register so AppDelegate.applicationShouldTerminate can interrupt us
-        // before macOS reaps the parent and leaves the tempdir orphaned.
         registryToken = SubprocessRegistry.shared.register(
             interrupt: { [weak process] in
                 if let p = process, p.isRunning {
@@ -164,8 +189,7 @@ final class ArchiveViewerSession: ObservableObject {
 
     func stop() async {
         if let process = process, process.isRunning {
-            // SIGINT — Python's serve_forever catches KeyboardInterrupt and runs
-            // its finally block to clean up the TemporaryDirectory.
+            // SIGINT → Python's KeyboardInterrupt → tempdir cleanup.
             process.interrupt()
         }
         process = nil
@@ -173,13 +197,92 @@ final class ArchiveViewerSession: ObservableObject {
         state = .idle
     }
 
-    nonisolated private static func parseServingURL(from line: String) -> URL? {
-        // viewer.py prints exactly: "Serving archive at http://127.0.0.1:NNNN/index.html"
-        let pattern = #"http://127\.0\.0\.1:\d+/[^\s]*"#
-        guard let range = line.range(of: pattern, options: .regularExpression) else {
+    // MARK: - Event handling
+
+    private func apply(event: ViewEvent) {
+        switch event {
+        case .decryptProgress(let processed, let total):
+            if case .starting = state {
+                state = .starting(Progress(stage: .decrypting, processed: processed, total: total))
+            }
+        case .extractProgress(let processed, let total):
+            if case .starting = state {
+                state = .starting(Progress(stage: .extracting, processed: processed, total: total))
+            }
+        case .ready(let url):
+            if case .starting = state {
+                state = .ready(url)
+            }
+        case .error(let message):
+            state = .failed(message)
+        }
+    }
+
+    private enum ViewEvent {
+        case decryptProgress(processed: Int, total: Int)
+        case extractProgress(processed: Int, total: Int)
+        case ready(URL)
+        case error(String)
+    }
+
+    nonisolated private static func parseEvent(from line: String) -> ViewEvent? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}") else { return nil }
+        guard let data = trimmed.data(using: .utf8) else { return nil }
+        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-        return URL(string: String(line[range]))
+
+        if let error = raw["error"] as? String {
+            return .error(error)
+        }
+
+        guard let event = raw["event"] as? String else { return nil }
+
+        switch event {
+        case "decrypt_progress":
+            let processed = (raw["processed"] as? Int) ?? 0
+            let total = (raw["total"] as? Int) ?? 0
+            return .decryptProgress(processed: processed, total: total)
+        case "extract_progress":
+            let processed = (raw["processed"] as? Int) ?? 0
+            let total = (raw["total"] as? Int) ?? 0
+            return .extractProgress(processed: processed, total: total)
+        case "ready":
+            guard let urlString = raw["url"] as? String,
+                  let url = URL(string: urlString) else { return nil }
+            return .ready(url)
+        default:
+            return nil
+        }
+    }
+
+    /// Picks the most useful failure string out of the stderr transcript:
+    /// a JSON error envelope if there is one, otherwise the last non-JSON
+    /// line (often a Python exception), otherwise a fallback.
+    nonisolated private static func extractFailureMessage(
+        from transcript: String,
+        exitCode: Int32
+    ) -> String {
+        var lastHumanReadable: String?
+        for raw in transcript.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            if line.hasPrefix("{"), line.hasSuffix("}"),
+               let data = line.data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let error = dict["error"] as? String {
+                    return error
+                }
+                // Skip progress events.
+                continue
+            }
+            lastHumanReadable = line
+        }
+        if let lastHumanReadable, !lastHumanReadable.isEmpty {
+            return lastHumanReadable
+        }
+        return "imvault view exited with code \(exitCode)."
     }
 }
 
@@ -190,6 +293,7 @@ final class ArchiveViewerSession: ObservableObject {
 private final class LineScanner: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer = ""
+    private var transcript = ""
     private let onLine: @Sendable (String) -> Void
 
     init(onLine: @escaping @Sendable (String) -> Void) {
@@ -200,6 +304,7 @@ private final class LineScanner: @unchecked Sendable {
         guard let chunk = String(data: data, encoding: .utf8) else { return }
         lock.lock()
         buffer += chunk
+        transcript += chunk
         var lines: [String] = []
         while let newline = buffer.firstIndex(where: { $0 == "\n" || $0 == "\r" }) {
             let line = String(buffer[..<newline])
@@ -210,5 +315,23 @@ private final class LineScanner: @unchecked Sendable {
         for line in lines {
             onLine(line)
         }
+    }
+
+    /// Force any buffered partial line through `onLine`. Call once when the
+    /// stream is known to be closed.
+    func flush() {
+        lock.lock()
+        let leftover = buffer
+        buffer = ""
+        lock.unlock()
+        if !leftover.isEmpty {
+            onLine(leftover)
+        }
+    }
+
+    var transcriptCopy: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return transcript
     }
 }
