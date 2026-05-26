@@ -1,7 +1,7 @@
 import Foundation
 
-// JSON shapes emitted by `imvault` v0.3.0.
-// All snake_case keys are mapped via JSONDecoder.keyDecodingStrategy = .convertFromSnakeCase.
+// JSON shapes emitted by `imvault` v0.3.0+. All snake_case keys are mapped via
+// JSONDecoder.keyDecodingStrategy = .convertFromSnakeCase.
 
 struct Chat: Codable, Identifiable, Hashable, Sendable {
     let chatId: Int
@@ -53,6 +53,9 @@ struct ExportEvent: Codable, Hashable, Sendable {
         case chatStarted = "chat_started"
         case chatDone = "chat_done"
         case attachment
+        /// CLI v0.4.1+: emitted during the post-tar.gz encrypt phase.
+        /// `chatId` is null; `processed`/`total` count ciphertext chunks.
+        case encryptProgress = "encrypt_progress"
     }
     let event: Kind
     let chatId: Int?
