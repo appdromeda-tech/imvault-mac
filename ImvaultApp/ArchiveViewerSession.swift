@@ -21,12 +21,16 @@ final class ArchiveViewerSession: ObservableObject {
     @Published private(set) var state: State = .idle
 
     private var process: Process?
+    private var registryToken: SubprocessRegistry.Token?
 
     deinit {
-        // Deinit runs nonisolated. terminate() is SIGTERM — last-resort cleanup
-        // if the user force-quit while the sheet is up; tempdirs may leak.
-        // Normal Close uses stop() which sends SIGINT for clean shutdown.
-        process?.terminate()
+        // Deinit runs nonisolated. interrupt() is SIGINT — Python's
+        // serve_forever catches KeyboardInterrupt and runs the finally block
+        // to clean up the TemporaryDirectory. AppDelegate.applicationShouldTerminate
+        // (via SubprocessRegistry) takes care of waiting for that cleanup
+        // before AppKit returns. terminate() (SIGTERM) is a last-resort
+        // fallback if SIGINT doesn't take.
+        process?.interrupt()
     }
 
     func start(archive: URL, password: String) async {
@@ -100,17 +104,33 @@ final class ArchiveViewerSession: ObservableObject {
             let exitCode = proc.terminationStatus
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if case .ready = self.state {
-                    // The subprocess exited after we were already serving —
-                    // user closed the viewer; nothing to surface.
-                    self.state = .idle
-                    return
-                }
+                // Whichever path we're on, the subprocess is gone — release
+                // the registry slot so app-quit doesn't try to interrupt a
+                // corpse.
+                self.registryToken = nil
+
                 let trimmed = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let message = trimmed.isEmpty
-                    ? "imvault view exited with code \(exitCode)."
-                    : trimmed
-                self.state = .failed(message)
+                switch self.state {
+                case .ready:
+                    // We were serving and the subprocess died. If it was the
+                    // user's Close button, stop() already cleared state to
+                    // .idle; the most we'd be doing is reasserting .idle.
+                    // But if Python crashed mid-serve, surface that — a blank
+                    // WKWebView with no message is the worst outcome.
+                    if exitCode == 0 || exitCode == SIGINT {
+                        self.state = .idle
+                    } else {
+                        let message = trimmed.isEmpty
+                            ? "Viewer ended unexpectedly (exit code \(exitCode)). Close and reopen the archive."
+                            : "Viewer ended unexpectedly:\n\(trimmed)"
+                        self.state = .failed(message)
+                    }
+                case .starting, .idle, .failed:
+                    let message = trimmed.isEmpty
+                        ? "imvault view exited with code \(exitCode)."
+                        : trimmed
+                    self.state = .failed(message)
+                }
             }
         }
 
@@ -120,6 +140,19 @@ final class ArchiveViewerSession: ObservableObject {
             state = .failed("Couldn't launch imvault view: \(error.localizedDescription)")
             return
         }
+
+        // Register so AppDelegate.applicationShouldTerminate can interrupt us
+        // before macOS reaps the parent and leaves the tempdir orphaned.
+        registryToken = SubprocessRegistry.shared.register(
+            interrupt: { [weak process] in
+                if let p = process, p.isRunning {
+                    p.interrupt()
+                }
+            },
+            isRunning: { [weak process] in
+                process?.isRunning ?? false
+            }
+        )
 
         // Feed the password through stdin (--password-fd 0).
         let stdin = stdinPipe.fileHandleForWriting

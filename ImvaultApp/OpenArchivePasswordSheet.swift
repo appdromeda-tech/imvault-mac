@@ -1,13 +1,28 @@
 import SwiftUI
 
 /// Small modal that takes a password for an `.imv` archive the user just picked.
-/// Submit fires `onSubmit(password)`; cancel fires `onCancel()`.
+/// Submit fires `onSubmit(password)`; cancel fires `onCancel()`. Shows a memory
+/// warning for very large archives — the viewer's decrypt path loads the entire
+/// archive into RAM, so a 5 GB `.imv` will peak around 10 GB.
 struct OpenArchivePasswordSheet: View {
     let archive: URL
     let onSubmit: (String) -> Void
     let onCancel: () -> Void
 
     @State private var password: String = ""
+
+    private var archiveSize: Int64? {
+        let values = try? archive.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize.map(Int64.init)
+    }
+
+    /// 1 GB threshold. The CLI viewer reads the whole archive into memory
+    /// before decrypting, so anything north of ~1 GB starts noticeably stressing
+    /// 8-GB-class Macs.
+    private var isLargeArchive: Bool {
+        guard let size = archiveSize else { return false }
+        return size > 1_000_000_000
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,17 +35,29 @@ struct OpenArchivePasswordSheet: View {
                     .bold()
             }
 
-            Text(archive.lastPathComponent)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .truncationMode(.middle)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(archive.lastPathComponent)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .truncationMode(.middle)
+                    .lineLimit(1)
+                if let size = archiveSize {
+                    Text(OpenArchivePasswordSheet.formatBytes(size))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                }
+            }
 
             HStack {
                 Text("Password:")
                     .frame(width: 80, alignment: .trailing)
                 SecureField("", text: $password)
                     .onSubmit(submit)
+            }
+
+            if isLargeArchive, let size = archiveSize {
+                largeArchiveWarning(size: size)
             }
 
             HStack {
@@ -43,12 +70,37 @@ struct OpenArchivePasswordSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 480)
+    }
+
+    @ViewBuilder private func largeArchiveWarning(size: Int64) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Large archive")
+                    .font(.callout)
+                    .bold()
+                Text("Decryption loads the full archive into memory — expect roughly \(OpenArchivePasswordSheet.formatBytes(size * 2)) of RAM use and a few minutes of work before the viewer appears.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func submit() {
         guard !password.isEmpty else { return }
         onSubmit(password)
+    }
+
+    static func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }
 

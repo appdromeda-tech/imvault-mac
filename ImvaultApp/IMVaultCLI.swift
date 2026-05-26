@@ -61,6 +61,7 @@ struct IMVaultCLI {
         chatIDs: [Int],
         to output: URL,
         password: String,
+        cancellation: CancellableProcessRef? = nil,
         progress: @escaping @Sendable (ExportEvent) -> Void
     ) async throws {
         var args = ["export", "--progress-json", "--password-fd", "0", "-o", output.path]
@@ -75,6 +76,7 @@ struct IMVaultCLI {
         _ = try await run(
             arguments: args,
             stdin: password + "\n",
+            cancellation: cancellation,
             onStderrLine: { line in
                 guard let data = line.data(using: .utf8) else { return }
                 if let event = try? snakeDecoder.decode(ExportEvent.self, from: data) {
@@ -103,18 +105,25 @@ struct IMVaultCLI {
     private static func run(
         arguments: [String],
         stdin: String? = nil,
+        cancellation: CancellableProcessRef? = nil,
         onStderrLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> RunResult {
         // Process.waitUntilExit blocks; hop off the caller's thread so we don't
         // stall a cooperative-pool thread (or the main actor, if called from one).
         try await Task.detached(priority: .userInitiated) {
-            try runBlocking(arguments: arguments, stdin: stdin, onStderrLine: onStderrLine)
+            try runBlocking(
+                arguments: arguments,
+                stdin: stdin,
+                cancellation: cancellation,
+                onStderrLine: onStderrLine
+            )
         }.value
     }
 
     private static func runBlocking(
         arguments: [String],
         stdin: String?,
+        cancellation: CancellableProcessRef?,
         onStderrLine: (@Sendable (String) -> Void)?
     ) throws -> RunResult {
         let url = binaryURL
@@ -125,6 +134,7 @@ struct IMVaultCLI {
         let process = Process()
         process.executableURL = url
         process.arguments = arguments
+        cancellation?.attach(process)
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -210,6 +220,37 @@ struct IMVaultCLI {
             }
         }
         return nil
+    }
+}
+
+/// Holds a weak reference to a running Process so the caller can interrupt it
+/// (SIGINT) from outside the wrapper — Phase 4d's Cancel button and the
+/// app-quit shutdown path both use this. Created by the caller, attached by
+/// the wrapper when it spawns the subprocess.
+final class CancellableProcessRef: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var process: Process?
+
+    fileprivate func attach(_ process: Process) {
+        lock.lock(); defer { lock.unlock() }
+        self.process = process
+    }
+
+    /// Send SIGINT — Python catches this as KeyboardInterrupt and runs its
+    /// finally blocks (clean tempdir cleanup, partial-file is whatever was
+    /// already on disk).
+    func interrupt() {
+        lock.lock()
+        let p = process
+        lock.unlock()
+        if let p, p.isRunning {
+            p.interrupt()
+        }
+    }
+
+    var isRunning: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return process?.isRunning ?? false
     }
 }
 

@@ -18,6 +18,9 @@ struct ExportSheet: View {
     @State private var passwordConfirm: String = ""
     @State private var phase: Phase = .configuring
     @State private var exportTask: Task<Void, Never>?
+    @State private var cancellable = CancellableProcessRef()
+    @State private var registryToken: SubprocessRegistry.Token?
+    @State private var didCancel = false
 
     private var chatsByID: [Int: Chat] {
         Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
@@ -26,6 +29,19 @@ struct ExportSheet: View {
     private var isRunning: Bool {
         if case .running = phase { return true }
         return false
+    }
+
+    /// Free space on the volume holding the chosen output path, in bytes.
+    /// nil if it can't be determined (e.g. parent dir doesn't exist yet).
+    private var freeSpaceOnTarget: Int64? {
+        let dir = outputURL.deletingLastPathComponent()
+        let values = try? dir.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        return values?.volumeAvailableCapacity.map(Int64.init)
+    }
+
+    private var lowDiskSpace: Bool {
+        guard let free = freeSpaceOnTarget else { return false }
+        return free < 1_000_000_000 // 1 GB
     }
 
     var body: some View {
@@ -96,6 +112,12 @@ struct ExportSheet: View {
             .padding(.vertical, 4)
         }
 
+        if lowDiskSpace, let free = freeSpaceOnTarget {
+            warningBanner(
+                "Less than \(ExportSheet.formatBytes(free)) free on the target volume — exports of large chats may fail mid-write."
+            )
+        }
+
         HStack {
             Spacer()
             Button("Cancel") { onDismiss() }
@@ -104,6 +126,19 @@ struct ExportSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canExport)
         }
+    }
+
+    @ViewBuilder private func warningBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var canExport: Bool {
@@ -145,10 +180,17 @@ struct ExportSheet: View {
         }
         .progressViewStyle(.linear)
 
-        Text("\(Int((progress.isNaN ? 0 : progress) * 100))%")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
+        HStack {
+            Text("\(Int((progress.isNaN ? 0 : progress) * 100))%")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Spacer()
+            Button("Cancel", role: .destructive) {
+                cancelExport()
+            }
+            .disabled(didCancel)
+        }
     }
 
     // MARK: - Completed
@@ -211,11 +253,19 @@ struct ExportSheet: View {
 
     private func startExport() {
         phase = .running(progress: 0, label: "Preparing…")
+        didCancel = false
 
         let chatIDs = selectedChatIDs
         let url = outputURL
         let pwd = password
         let nameLookup = chatsByID
+        let handle = cancellable
+
+        // Register so the app-quit shutdown path can SIGINT us cleanly.
+        registryToken = SubprocessRegistry.shared.register(
+            interrupt: { handle.interrupt() },
+            isRunning: { handle.isRunning }
+        )
 
         exportTask = Task {
             do {
@@ -223,6 +273,7 @@ struct ExportSheet: View {
                     chatIDs: chatIDs,
                     to: url,
                     password: pwd,
+                    cancellation: handle,
                     progress: { event in
                         Task { @MainActor in
                             applyProgress(event, nameLookup: nameLookup)
@@ -230,14 +281,31 @@ struct ExportSheet: View {
                     }
                 )
                 await MainActor.run {
+                    registryToken = nil
                     phase = .completed(url)
                 }
             } catch {
                 await MainActor.run {
-                    phase = .failed(error.localizedDescription)
+                    registryToken = nil
+                    // Best-effort cleanup of the partial output file; the
+                    // CLI was either interrupted or threw mid-write.
+                    try? FileManager.default.removeItem(at: url)
+                    if didCancel {
+                        // User asked for this — just close the sheet.
+                        onDismiss()
+                    } else {
+                        phase = .failed(error.localizedDescription)
+                    }
                 }
             }
         }
+    }
+
+    private func cancelExport() {
+        didCancel = true
+        cancellable.interrupt()
+        // The export task will catch the non-zero exit (or CLI cancel error),
+        // do partial-file cleanup, see didCancel = true, and dismiss the sheet.
     }
 
     @MainActor
@@ -265,6 +333,13 @@ struct ExportSheet: View {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents")
         return documents.appendingPathComponent("imvault_export.imv")
+    }
+
+    static func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 }
 
