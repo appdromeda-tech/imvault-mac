@@ -12,18 +12,18 @@ struct ContentView: View {
     enum ActiveSheet: Identifiable {
         case export
         case openArchivePassword(URL)
-        case viewer(URL, String)
 
         var id: String {
             switch self {
             case .export: return "export"
             case .openArchivePassword(let url): return "open-pw:\(url.path)"
-            case .viewer(let url, _): return "viewer:\(url.path)"
             }
         }
     }
 
     let contactsStatus: CNAuthorizationStatus
+
+    @Environment(\.openWindow) private var openWindow
 
     @State private var loadState: LoadState = .loading
     @State private var selection: Set<Int> = []
@@ -177,17 +177,17 @@ struct ContentView: View {
             OpenArchivePasswordSheet(
                 archive: url,
                 onSubmit: { password in
-                    activeSheet = .viewer(url, password)
+                    // Dismiss the password sheet first, then open the archive
+                    // in its own resizable window. ViewerStore holds the live
+                    // session in memory; the window restoration parameter is
+                    // just a UUID, so the password never persists to disk.
+                    activeSheet = nil
+                    let id = ViewerStore.shared.open(archive: url, password: password)
+                    openWindow(id: "viewer", value: id)
                 },
                 onCancel: {
                     activeSheet = nil
                 }
-            )
-        case .viewer(let url, let password):
-            ArchiveViewerSheet(
-                archive: url,
-                password: password,
-                onDismiss: { activeSheet = nil }
             )
         }
     }

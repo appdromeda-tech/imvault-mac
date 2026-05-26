@@ -1,46 +1,49 @@
 import SwiftUI
 import WebKit
 
-/// Hosts a single archive's reader UI: spawns `imvault view`, then displays the
-/// resulting localhost URL in a WKWebView. Dismiss tears the subprocess down.
-struct ArchiveViewerSheet: View {
-    let archive: URL
-    let password: String
-    let onDismiss: () -> Void
-
-    @StateObject private var session = ArchiveViewerSession()
+/// The root view of the archive-viewer `WindowGroup`. Looks up the session in
+/// `ViewerStore.shared` by the UUID embedded in the window value; if there's
+/// no live session (e.g., macOS restored the window after a relaunch — sessions
+/// live only in memory, by design, so the password never persists), shows a
+/// graceful placeholder.
+struct ArchiveViewerWindowContainer: View {
+    let id: UUID
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        .frame(minWidth: 900, minHeight: 600)
-        .task {
-            await session.start(archive: archive, password: password)
+        if let session = ViewerStore.shared.session(for: id) {
+            ArchiveViewerWindow(id: id, session: session)
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.secondary)
+                Text("Viewer session ended")
+                    .font(.headline)
+                Text("Re-open the archive from the main window.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(minWidth: 480, minHeight: 240)
+            .navigationTitle("imvault Archive")
         }
     }
+}
 
-    @ViewBuilder private var header: some View {
-        HStack {
-            Image(systemName: "lock.doc")
-                .foregroundStyle(.tint)
-            Text(archive.lastPathComponent)
-                .font(.headline)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Button("Close") {
-                Task {
-                    await session.stop()
-                    onDismiss()
-                }
+/// Hosts a single archive's reader UI inside its own window. The window is
+/// fully resizable, draggable, full-screenable. When the user closes the
+/// window the `.onDisappear` modifier tears down the underlying subprocess
+/// via `ViewerStore.close(id)`.
+struct ArchiveViewerWindow: View {
+    let id: UUID
+    @ObservedObject var session: ArchiveViewerSession
+
+    var body: some View {
+        content
+            .frame(minWidth: 700, minHeight: 500)
+            .navigationTitle(session.archiveURL?.lastPathComponent ?? "imvault Archive")
+            .onDisappear {
+                ViewerStore.shared.close(id)
             }
-            .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     @ViewBuilder private var content: some View {
@@ -105,16 +108,6 @@ struct ArchiveViewerSheet: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            HStack {
-                Spacer()
-                Button("Close") {
-                    Task {
-                        await session.stop()
-                        onDismiss()
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)

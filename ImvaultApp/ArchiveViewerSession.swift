@@ -47,6 +47,7 @@ final class ArchiveViewerSession: ObservableObject {
     }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var archiveURL: URL?
 
     private var process: Process?
     private var registryToken: SubprocessRegistry.Token?
@@ -63,6 +64,7 @@ final class ArchiveViewerSession: ObservableObject {
     func start(archive: URL, password: String) async {
         // Defensive: if a previous run is still around, tear it down first.
         await stop()
+        archiveURL = archive
         state = .starting(nil)
 
         let binary = IMVaultCLI.binaryURL
