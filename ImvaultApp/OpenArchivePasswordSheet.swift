@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Small modal that takes a password for an `.imv` archive the user just picked.
-/// Submit fires `onSubmit(password)`; cancel fires `onCancel()`. Shows a memory
-/// warning for very large archives — the viewer's decrypt path loads the entire
-/// archive into RAM, so a 5 GB `.imv` will peak around 10 GB.
+/// Submit fires `onSubmit(password)`; cancel fires `onCancel()`. Shows a heads-up
+/// for very large archives — the viewer decrypts via the CLI's streaming path
+/// (CHUNK_SIZE-bounded memory), but a copy still gets extracted to the system
+/// tempdir for the viewer session, so users need archive-size free disk space.
 struct OpenArchivePasswordSheet: View {
     let archive: URL
     let onSubmit: (String) -> Void
@@ -81,7 +82,7 @@ struct OpenArchivePasswordSheet: View {
                 Text("Large archive")
                     .font(.callout)
                     .bold()
-                Text("Decryption loads the full archive into memory — expect roughly \(OpenArchivePasswordSheet.formatBytes(size * 2)) of RAM use and a few minutes of work before the viewer appears.")
+                Text("Decrypt and extract take a few minutes at this size. About \(OpenArchivePasswordSheet.formatBytes(size)) of free disk space is needed in your system temp directory while the viewer is open; it's cleaned up when you close the archive.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
