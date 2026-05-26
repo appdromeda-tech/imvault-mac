@@ -1,41 +1,89 @@
-# imvault-mac
+# imvault
 
-Native macOS GUI for [imvault](https://github.com/reznto/imvault) — an iMessage archiver and viewer.
+A native macOS app for archiving and reading your iMessage history. Encrypts conversations into a single portable `.imv` file and includes a built-in viewer.
 
-The architecture, phase plan, and design constraints live in `docs/mac-app-plan.md` of the [`reznto/imvault`](https://github.com/reznto/imvault) repo (the source of truth).
+GUI wrapper around the [`imvault` CLI](https://github.com/reznto/imvault) — same crypto, same archive format, no terminal required.
 
-## Status
+## Download
 
-Phase 2a: SwiftUI shell + Python sidecar bundled inside the `.app`. The app builds, launches, and ships a working `imvault` CLI at `Contents/Resources/python-runtime/bin/imvault`. Swift code doesn't call it yet — that's Phase 2b.
+Grab the latest `.dmg` from the [Releases](https://github.com/appdromeda-tech/imvault-mac/releases) page.
 
-## Requirements
+Apple Silicon only for now. Intel support is on the polish list.
 
-- macOS 14 (Sonoma) or later — minimum deployment target
-- Xcode 15 or later
+## Install
+
+1. Open the downloaded `.dmg`
+2. Drag **imvault** to your **Applications** folder
+3. Eject the disk image (it doesn't need to stay mounted)
+4. Launch imvault from Launchpad or Applications
+
+The DMG is notarized by Apple, so you shouldn't see any Gatekeeper warnings. If macOS does prompt you the first time, right-click the app → Open.
+
+## First launch — Full Disk Access
+
+To read your iMessage history (`~/Library/Messages/chat.db`), imvault needs **Full Disk Access**. macOS requires you to grant this manually — apps can't request it programmatically.
+
+The app's onboarding screen walks you through it:
+
+1. Click **Open System Settings**
+2. Click the `+` button under Full Disk Access and add **imvault.app**
+3. Toggle imvault on
+4. **Quit and relaunch** imvault — Full Disk Access only takes effect at app launch
+
+You'll only do this once per install.
+
+## Using it
+
+- **Browse your chats** in the sidebar; search at the top filters by conversation name; tick the checkboxes to select what to export.
+- **Export** opens a sheet that picks an output location, takes a password (used to encrypt the archive — there's no recovery if you lose it), and shows live progress.
+- **Open archive…** (`⌘O`) decrypts an existing `.imv` and opens it in a built-in reader so you can browse the conversations.
+- Cancel any export mid-run from the progress sheet. ⌘Q during an export sends a clean shutdown; the partial file is removed on next launch.
+
+The encrypted `.imv` archive is portable — you can keep it on a USB drive, in cloud storage, on another Mac, etc. As long as you remember the password, imvault (or the `imvault` CLI on any platform) can open it.
+
+## System requirements
+
+- macOS 14 (Sonoma) or later
+- Apple Silicon (M1/M2/M3/M4)
+- ~150 MB disk for the `.app` (bundles Python + crypto libraries)
+- Enough free RAM to decrypt your largest archive (decrypt streams chunk-by-chunk, so even multi-GB archives now stay bounded; for those, allow a few minutes for decrypt + extract)
+
+## Privacy
+
+- imvault is fully **offline** — it never sends your messages anywhere. The only network activity in the app is the localhost HTTP server the archive viewer uses (`http://127.0.0.1:N`).
+- Archives are encrypted with **AES-256-GCM** and the password is stretched through **Argon2id**.
+- The app does **not** use the macOS App Sandbox, because the sandbox can't read `chat.db` without per-session permission dialogs. Hardened Runtime is on, and the bundled Python runtime is fully Developer ID signed and notarized.
+- Source is MIT licensed; build it yourself if you don't want to trust the prebuilt DMG.
+
+---
+
+# Contributing / building from source
+
+The rest of this document is for contributors. End users don't need anything below.
+
+## Architecture overview
+
+SwiftUI front-end (this repo) + a bundled Python sidecar built from [`python-build-standalone`](https://github.com/astral-sh/python-build-standalone) that contains the `imvault` CLI. The Swift code talks to the CLI as a subprocess via JSON-on-stderr event streams. Crypto, DB parsing, and archive format all live in the CLI ([`reznto/imvault`](https://github.com/reznto/imvault)) — this repo is purely the Mac wrapper.
+
+The full design plan lives in `docs/mac-app-plan.md` of the CLI repo.
+
+## Build requirements
+
+- macOS 14 (Sonoma) or later
+- Xcode 15+
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 - ~150 MB of disk for the bundled Python runtime
-- Apple Developer Program enrollment (for signing). Current dev team: `42WA4984A7` (Eddie Tang). The build pins this team, so a different machine will need to edit `project.yml` first.
+- Apple Developer Program membership (for signing). Dev team currently pinned to `42WA4984A7` in `project.yml`; change that line if building under your own team.
 
-## Build
+## Building locally
 
 ```bash
-# 1. Generate the Xcode project from project.yml.
-xcodegen generate
-
-# 2. Open in Xcode.
+xcodegen generate         # generate ImvaultApp.xcodeproj from project.yml
 open ImvaultApp.xcodeproj
-
-# 3. ⌘R to build and run.
+# ⌘R in Xcode
 ```
 
-The first build is slow (~3–5 min): it downloads [`python-build-standalone`](https://github.com/astral-sh/python-build-standalone) and pip-installs `imvault` plus its native deps (cryptography compiles from source). Subsequent builds are fast — the sidecar build script short-circuits when the pinned versions are already in `build/python-runtime/`.
-
-You can also build the sidecar manually before opening Xcode:
-
-```bash
-./scripts/build-sidecar.sh           # idempotent — skip if up-to-date
-./scripts/build-sidecar.sh --force   # rebuild unconditionally
-```
+First build is slow (~3–5 min) because `scripts/build-sidecar.sh` downloads `python-build-standalone` and pip-installs `imvault` plus its native deps (cryptography compiles from source). Subsequent builds short-circuit via a manifest file in `build/python-runtime/`.
 
 The `.xcodeproj` is gitignored — it's a build artifact regenerated from `project.yml`. Always edit `project.yml`, not the project file.
 
@@ -45,70 +93,115 @@ The `.xcodeproj` is gitignored — it's a build artifact regenerated from `proje
 imvault-mac/
 ├── README.md
 ├── LICENSE                          # MIT (matches CLI)
-├── .gitignore
-├── project.yml                      # XcodeGen config — the source of truth
+├── project.yml                      # XcodeGen config — source of truth
 ├── scripts/
-│   └── build-sidecar.sh             # Downloads python-build-standalone + pip installs imvault
+│   ├── build-sidecar.sh             # Downloads PBS + pip-installs imvault
+│   ├── codesign-runtime.sh          # Codesigns every Mach-O in the runtime
+│   ├── release.sh                   # One-button signed + notarized DMG
+│   └── build-icon.sh                # Regenerates AppIcon.icns
 └── ImvaultApp/
-    ├── ImvaultApp.swift             # @main App entry
-    ├── ContentView.swift            # Placeholder UI
-    ├── Info.plist                   # Bundle metadata + NSContactsUsageDescription
-    └── ImvaultApp.entitlements      # Contacts, library validation off, hardened runtime, no app sandbox
+    ├── *.swift                      # SwiftUI views + IMVaultCLI wrapper
+    ├── Info.plist
+    ├── ImvaultApp.entitlements      # Contacts + library-validation-disable, no sandbox
+    └── AppIcon.icns                 # Generated by scripts/build-icon.sh
 ```
 
-`build/` (gitignored) contains the cached PBS tarball and the assembled `python-runtime/` tree that's rsynced into the `.app` on every build.
+`build/` is gitignored: cached PBS tarball, the assembled `python-runtime/` tree (rsynced into the `.app` on every build), Xcode DerivedData, and any DMG output from `release.sh`.
 
 ## How the sidecar is wired up
 
-A post-build Run Script phase (defined in `project.yml`) does two things:
+A post-build Run Script (defined in `project.yml`):
 
-1. Runs `scripts/build-sidecar.sh` to ensure `build/python-runtime/` is up to date.
+1. Runs `scripts/build-sidecar.sh` to ensure `build/python-runtime/` is current.
 2. `rsync`s `build/python-runtime/` → `<app>/Contents/Resources/python-runtime/`.
+3. For Release builds only: runs `scripts/codesign-runtime.sh` to codesign every Mach-O inside the runtime with Developer ID Application + hardened runtime + `--timestamp`, so the outer `.app` sign (which Xcode does next) covers a fully signed tree.
 
 Pinned versions (edit in `scripts/build-sidecar.sh`):
 
 - `python-build-standalone` release: **20260510**
 - Python: **3.12.13**
-- Arch: **aarch64-apple-darwin** (Apple Silicon only for now; Intel is deferred)
-- `imvault`: **0.3.0** (installed from `git+https://github.com/reznto/imvault.git@v0.3.0` since the CLI isn't on PyPI)
+- Arch: **aarch64-apple-darwin**
+- `imvault`: **0.4.1** (installed from a git tag — the CLI isn't on PyPI)
 
 ## Entitlements
 
-- `com.apple.security.personal-information.addressbook` — for `CNContactStore` access (names instead of phone numbers).
-- `com.apple.security.cs.disable-library-validation` — required so the hardened runtime allows loading the bundled Python's `.dylib` / `.so` files, which aren't signed by Apple.
-- **No** `com.apple.security.app-sandbox` — required so the app can read `~/Library/Messages/chat.db` directly. Full Disk Access (FDA) is a TCC permission granted by the user in System Settings, not an entitlement.
-- Hardened Runtime is on (`ENABLE_HARDENED_RUNTIME = YES`) because notarization requires it.
-
-For Release builds, the post-build Run Script also codesigns every Mach-O inside the bundled Python runtime with Developer ID Application + hardened runtime (see `scripts/codesign-runtime.sh`). Debug builds skip this; they run fine locally thanks to `disable-library-validation`.
+- `com.apple.security.personal-information.addressbook` — `CNContactStore` access so chat participants show as names, not phone numbers.
+- `com.apple.security.cs.disable-library-validation` — required so hardened runtime allows loading the bundled Python's `.dylib`/`.so` files.
+- **No** `com.apple.security.app-sandbox` — needed to read `chat.db` directly. Full Disk Access is a separate TCC permission the user grants in System Settings.
+- Hardened Runtime is on (notarization requires it).
 
 ## Building a release DMG
 
-One-time setup:
+### One-time setup
 
-- **Developer ID Application cert** in your login keychain (Xcode → Settings → Accounts → Manage Certificates → +).
-- **Re-import that cert into the `ci-signing.keychain-db`** so codesign works from non-interactive shells (login-keychain codesigning fails with `errSecInternalComponent` in script contexts — same pattern documented in [myvota-ios/docs/headless-codesign-setup.md](https://github.com/appdromeda-tech/myvota-ios/blob/main/docs/headless-codesign-setup.md)). Export the identity as a `.p12`, then:
-  ```bash
-  security unlock-keychain -p "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
-  security import ~/dev-id.p12 -k ~/Library/Keychains/ci-signing.keychain-db -P "<p12-export-password>" -T /usr/bin/codesign -T /usr/bin/security
-  security set-key-partition-list -S apple-tool:,apple: -s -k "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
-  ```
-- **Notarytool credentials** cached:
-  ```bash
-  xcrun notarytool store-credentials imvault-notary \
+**1. Developer ID Application cert.** Create one in Xcode → Settings → Accounts → Manage Certificates → `+`. If `+` doesn't show "Developer ID Application", create it at [developer.apple.com](https://developer.apple.com/account/resources/certificates/list) and let Xcode pick it up.
+
+**2. Dedicated CI keychain for code signing.** On a typical macOS install, the login keychain rejects codesign calls from non-interactive shells with `errSecInternalComponent` (the partition-list integrity check requires interactive context, which scripts don't have). Standard workaround is a dedicated keychain that can be unlocked programmatically:
+
+```bash
+# Create the keychain (one-time)
+security create-keychain -p "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
+
+# Export your Developer ID Application identity from the login keychain
+# as a .p12 (Keychain Access → right-click identity → Export… → set a
+# password — use $P12_PASSWORD below as a stand-in)
+
+# Import into the CI keychain, marking codesign as an allowed app
+security unlock-keychain -p "$CI_KEYCHAIN_PASSWORD" ~/Library/Keychains/ci-signing.keychain-db
+security import ~/dev-id.p12 \
+    -k ~/Library/Keychains/ci-signing.keychain-db \
+    -P "$P12_PASSWORD" \
+    -T /usr/bin/codesign -T /usr/bin/security
+
+# Set the partition list so Apple-signed tools can use the private key
+# without an interactive prompt
+security set-key-partition-list -S apple-tool:,apple: -s \
+    -k "$CI_KEYCHAIN_PASSWORD" \
+    ~/Library/Keychains/ci-signing.keychain-db
+
+# Add to user search list (only if not already present)
+security list-keychains -d user -s \
+    ~/Library/Keychains/ci-signing.keychain-db \
+    $(security list-keychains -d user | tr -d '"')
+
+# Persist the unlock password as an env var (release.sh expects it)
+echo 'export CI_KEYCHAIN_PASSWORD="…"' >> ~/.zshrc
+```
+
+**3. Notarytool credentials.** Cache an App Store Connect API key:
+
+```bash
+xcrun notarytool store-credentials imvault-notary \
     --key ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
-    --key-id <KEY_ID> --issuer <ISSUER_UUID>
-  ```
-- **`CI_KEYCHAIN_PASSWORD`** exported in your shell rc.
+    --key-id <KEY_ID> \
+    --issuer <ISSUER_UUID>
+```
 
-To cut a release:
+Issuer/Key IDs come from App Store Connect → Users and Access → Integrations → Keys.
+
+### Cutting a release
 
 ```bash
 export CI_KEYCHAIN_PASSWORD='...'
-./scripts/release.sh                # builds, signs, notarizes, staples, produces build/imvault-X.Y.Z.dmg
-./scripts/release.sh --skip-notarize  # same minus Apple notary submission, useful for iterating
+
+./scripts/release.sh                  # build → sign → notarize → staple → DMG
+./scripts/release.sh --skip-notarize  # same minus Apple submission; useful while iterating
 ```
 
-The output is a Gatekeeper-accepted DMG (typically ~60 MB after compression of the 117 MB `.app`). Attach it to a GitHub release on `appdromeda-tech/imvault-mac`.
+Output: `build/imvault-<VERSION>.dmg`. A notarized, stapled DMG that passes `spctl --assess`. Typically ~60 MB compressed from the 117 MB `.app`.
+
+Attach to a GitHub release:
+
+```bash
+gh release create vX.Y.Z --repo appdromeda-tech/imvault-mac \
+    --title "imvault X.Y.Z" \
+    --notes "..." \
+    build/imvault-X.Y.Z.dmg
+```
+
+## App icon
+
+`ImvaultApp/AppIcon.icns` is a placeholder generated by `scripts/build-icon.sh` — a blue squircle with the `lock.doc.fill` SF Symbol. Re-run that script after editing the inline Swift to refresh; commit the regenerated `.icns`. Real branded art is on the polish list.
 
 ## Bundle identifier
 
