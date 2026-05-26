@@ -30,6 +30,8 @@ struct ContentView: View {
     @State private var searchText: String = ""
     @State private var activeSheet: ActiveSheet?
     @State private var sidecarVersion: String?
+    @State private var orphanedExports: [URL] = []
+    @State private var didCheckOrphans = false
 
     var body: some View {
         NavigationSplitView {
@@ -43,12 +45,64 @@ struct ContentView: View {
         .task {
             sidecarVersion = try? await IMVaultCLI.version()
             await loadChats()
+            checkOrphanedExports()
         }
         .sheet(item: $activeSheet) { sheet in
             sheetContent(for: sheet)
         }
         .onReceive(NotificationCenter.default.publisher(for: .openArchiveRequested)) { _ in
             presentOpenArchivePicker()
+        }
+        .alert(
+            "Partial export files from a previous session",
+            isPresented: orphansAlertBinding,
+            presenting: orphanedExports
+        ) { orphans in
+            Button("Delete", role: .destructive) {
+                deleteOrphans(orphans)
+                orphanedExports = []
+            }
+            Button("Keep") {
+                // Forget them so we don't re-prompt; leave the files on disk.
+                for url in orphans { PartialExportTracker.forget(url) }
+                orphanedExports = []
+            }
+        } message: { orphans in
+            Text(orphansMessage(for: orphans))
+        }
+    }
+
+    private var orphansAlertBinding: Binding<Bool> {
+        Binding(
+            get: { !orphanedExports.isEmpty },
+            set: { newValue in
+                if !newValue { orphanedExports = [] }
+            }
+        )
+    }
+
+    private func orphansMessage(for orphans: [URL]) -> String {
+        if orphans.count == 1 {
+            return "imvault was interrupted while writing:\n\n\(orphans[0].path)\n\nThis file is incomplete and can't be opened. Delete it?"
+        }
+        let list = orphans.prefix(5).map { "  • \($0.lastPathComponent)" }.joined(separator: "\n")
+        let extra = orphans.count > 5 ? "\n  …and \(orphans.count - 5) more" : ""
+        return "Found \(orphans.count) incomplete exports from a previous session:\n\n\(list)\(extra)\n\nThese can't be opened. Delete them?"
+    }
+
+    private func checkOrphanedExports() {
+        guard !didCheckOrphans else { return }
+        didCheckOrphans = true
+        let orphans = PartialExportTracker.detectOrphans()
+        if !orphans.isEmpty {
+            orphanedExports = orphans
+        }
+    }
+
+    private func deleteOrphans(_ orphans: [URL]) {
+        for url in orphans {
+            try? FileManager.default.removeItem(at: url)
+            PartialExportTracker.forget(url)
         }
     }
 

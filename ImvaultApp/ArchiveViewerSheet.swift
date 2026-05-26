@@ -58,23 +58,35 @@ struct ArchiveViewerSheet: View {
     @ViewBuilder private var startingView: some View {
         VStack(spacing: 14) {
             Spacer()
-            ProgressView()
-                .controlSize(.large)
-            Text(loadingDetail)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            if let progress = currentProgress, let fraction = progress.fraction {
+                ProgressView(value: fraction) {
+                    Text(progress.label)
+                        .multilineTextAlignment(.center)
+                }
                 .frame(maxWidth: 460)
-                .lineLimit(2, reservesSpace: true)
+                Text("\(Int(fraction * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+                Text(currentProgress?.label ?? "Preparing…")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+                    .lineLimit(2, reservesSpace: true)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var loadingDetail: String {
-        if case .starting(let detail) = session.state {
-            return detail
+    private var currentProgress: ArchiveViewerSession.Progress? {
+        if case .starting(let progress) = session.state {
+            return progress
         }
-        return "Decrypting archive…"
+        return nil
     }
 
     @ViewBuilder private func failureView(_ message: String) -> some View {
