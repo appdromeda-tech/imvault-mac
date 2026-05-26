@@ -18,7 +18,7 @@ set -euo pipefail
 PBS_RELEASE="20260510"
 PYTHON_VERSION="3.12.13"
 PYTHON_ARCH="aarch64-apple-darwin"
-IMVAULT_VERSION="0.4.0"
+IMVAULT_VERSION="0.4.1"
 
 ASSET="cpython-${PYTHON_VERSION}+${PBS_RELEASE}-${PYTHON_ARCH}-install_only.tar.gz"
 ASSET_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/${ASSET}"

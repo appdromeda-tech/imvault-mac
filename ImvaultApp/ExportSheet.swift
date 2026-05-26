@@ -332,6 +332,13 @@ struct ExportSheet: View {
             label = "Finished \(chatName ?? "conversation") (\(event.processed)/\(event.total))"
         case .attachment:
             label = "Copying attachments (\(event.processed)/\(event.total))"
+        case .encryptProgress:
+            // CLI v0.4.1+: emitted after the last chat_done while the tar.gz
+            // is being stream-encrypted. processed/total counts ciphertext
+            // chunks here — a different denominator than the chat events,
+            // so the progress bar resets visually. That's honest: it's a
+            // distinct sub-phase, and the label says so.
+            label = "Encrypting (\(event.processed)/\(event.total) chunks)…"
         }
         phase = .running(progress: progress, label: label)
 
