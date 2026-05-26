@@ -27,8 +27,19 @@ targets:
         INFOPLIST_FILE: ImvaultApp/Info.plist
         CODE_SIGN_ENTITLEMENTS: ImvaultApp/ImvaultApp.entitlements
         ENABLE_HARDENED_RUNTIME: YES
-        CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          # Automatic signing with Apple Development for local ⌘R runs.
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          # Manual signing with Developer ID Application for the distribution
+          # build. The post-build Run Script below picks up CODE_SIGN_IDENTITY
+          # from this setting and signs the bundled Python runtime to match.
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          OTHER_CODE_SIGN_FLAGS: "--timestamp"
+          PROVISIONING_PROFILE_SPECIFIER: ""
     postBuildScripts:
       - name: Bundle Python sidecar
         script: |
@@ -38,4 +49,13 @@ targets:
           RUNTIME_DST="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources/python-runtime"
           mkdir -p "$(dirname "${RUNTIME_DST}")"
           rsync -a --delete "${RUNTIME_SRC}/" "${RUNTIME_DST}/"
+          # Release: codesign every Mach-O inside the bundled runtime so the
+          # outer .app sign Xcode does after this phase covers a fully signed
+          # tree. Notarization requires every Mach-O to be Developer ID
+          # signed with hardened runtime + --timestamp.
+          if [ "${CONFIGURATION}" = "Release" ] && [ -n "${CODE_SIGN_IDENTITY:-}" ]; then
+              "${SRCROOT}/scripts/codesign-runtime.sh" \
+                  --identity "${CODE_SIGN_IDENTITY}" \
+                  --runtime-dir "${RUNTIME_DST}"
+          fi
         showEnvVarsInLog: false
