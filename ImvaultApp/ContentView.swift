@@ -1,6 +1,7 @@
 import AppKit
 import Contacts
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     enum LoadState {
@@ -32,6 +33,7 @@ struct ContentView: View {
     @State private var sidecarVersion: String?
     @State private var orphanedExports: [URL] = []
     @State private var didCheckOrphans = false
+    @State private var showingWelcome = false
 
     var body: some View {
         NavigationSplitView {
@@ -45,16 +47,36 @@ struct ContentView: View {
         .task {
             sidecarVersion = try? await IMVaultCLI.version()
             await loadChats()
-            checkOrphanedExports()
+            // Welcome takes priority over orphan prompts — first-time users
+            // need context before being asked to delete files.
+            if !WelcomeSheet.hasBeenShown {
+                showingWelcome = true
+            } else {
+                checkOrphanedExports()
+            }
         }
         .sheet(item: $activeSheet) { sheet in
             sheetContent(for: sheet)
         }
+        .sheet(isPresented: $showingWelcome) {
+            WelcomeSheet(onDismiss: {
+                showingWelcome = false
+                // Orphan check was skipped during welcome; do it now.
+                checkOrphanedExports()
+            })
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openArchiveRequested)) { _ in
             presentOpenArchivePicker()
         }
+        .onOpenURL { url in
+            // Triggered when the user double-clicks a .imv file in Finder
+            // (the file association in Info.plist routes it to us) or drops
+            // it on the app icon.
+            guard url.pathExtension.lowercased() == "imv" else { return }
+            activeSheet = .openArchivePassword(url)
+        }
         .alert(
-            "Partial export files from a previous session",
+            "Unfinished backup files",
             isPresented: orphansAlertBinding,
             presenting: orphanedExports
         ) { orphans in
@@ -83,11 +105,11 @@ struct ContentView: View {
 
     private func orphansMessage(for orphans: [URL]) -> String {
         if orphans.count == 1 {
-            return "imvault was interrupted while writing:\n\n\(orphans[0].path)\n\nThis file is incomplete and can't be opened. Delete it?"
+            return "imvault was interrupted while saving:\n\n\(orphans[0].path)\n\nThis backup is incomplete and can't be opened. Delete it?"
         }
         let list = orphans.prefix(5).map { "  • \($0.lastPathComponent)" }.joined(separator: "\n")
         let extra = orphans.count > 5 ? "\n  …and \(orphans.count - 5) more" : ""
-        return "Found \(orphans.count) incomplete exports from a previous session:\n\n\(list)\(extra)\n\nThese can't be opened. Delete them?"
+        return "Found \(orphans.count) unfinished backups from a previous session:\n\n\(list)\(extra)\n\nThese can't be opened. Delete them?"
     }
 
     private func checkOrphanedExports() {
@@ -130,7 +152,9 @@ struct ContentView: View {
             ChatDetailPlaceholder(
                 selectedCount: selection.count,
                 totalCount: chats.count,
-                sidecarVersion: sidecarVersion
+                sidecarVersion: sidecarVersion,
+                onBackUp: { activeSheet = .export },
+                onOpenBackup: { presentOpenArchivePicker() }
             )
         } else {
             // Match sidebar's loading/error state — keep the detail pane empty.
@@ -138,28 +162,25 @@ struct ContentView: View {
         }
     }
 
+    // The toolbar carries Back Up as a quick-access shortcut. Open Backup
+    // isn't here — it lives on the hero action card in the detail pane and
+    // in File menu → Open a Backup… (⌘O). Two separated toolbar icons on
+    // opposite corners felt scattered for non-technical users; the hero card
+    // is the modern way to surface primary actions.
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button {
-                presentOpenArchivePicker()
-            } label: {
-                Label("Open Archive…", systemImage: "lock.doc")
-            }
-            .help("Open and decrypt an existing .imv archive")
-        }
-
         ToolbarItem(placement: .primaryAction) {
             Button {
                 activeSheet = .export
             } label: {
                 Label(
                     selection.isEmpty
-                        ? "Export…"
-                        : "Export \(selection.count) selected…",
+                        ? "Back Up…"
+                        : "Back Up \(selection.count) Selected…",
                     systemImage: "square.and.arrow.down"
                 )
             }
             .disabled(selection.isEmpty)
+            .help("Save selected conversations as an encrypted backup")
         }
     }
 
@@ -194,12 +215,17 @@ struct ContentView: View {
 
     private func presentOpenArchivePicker() {
         let panel = NSOpenPanel()
-        panel.title = "Open imvault Archive"
+        panel.title = "Open Backup"
+        panel.prompt = "Open"
+        panel.message = "Choose an imvault backup file (.imv) to open."
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        // .imv has no registered UTI; let users pick anything.
-        panel.allowedContentTypes = []
+        // Filter to the UTI we registered in Info.plist (com.appdromeda.imvault.backup).
+        // Falls back to no filter on the off-chance the UTI isn't yet known.
+        if let imvType = UTType("com.appdromeda.imvault.backup") {
+            panel.allowedContentTypes = [imvType]
+        }
         if panel.runModal() == .OK, let url = panel.url {
             activeSheet = .openArchivePassword(url)
         }

@@ -31,7 +31,7 @@ struct OpenArchivePasswordSheet: View {
                 Image(systemName: "lock.doc")
                     .foregroundStyle(.tint)
                     .font(.title3)
-                Text("Open archive")
+                Text("Open backup")
                     .font(.title2)
                     .bold()
             }
@@ -79,10 +79,10 @@ struct OpenArchivePasswordSheet: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Large archive")
+                Text("Large backup")
                     .font(.callout)
                     .bold()
-                Text("Decrypt and extract take a few minutes at this size. About \(OpenArchivePasswordSheet.formatBytes(size)) of free disk space is needed in your system temp directory while the viewer is open; it's cleaned up when you close the archive.")
+                Text("Opening a backup this size takes a few minutes. About \(OpenArchivePasswordSheet.formatBytes(size)) of free disk space is needed temporarily while the viewer is open; it's cleaned up automatically when you close the backup.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
