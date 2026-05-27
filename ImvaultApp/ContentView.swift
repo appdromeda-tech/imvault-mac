@@ -152,7 +152,9 @@ struct ContentView: View {
             ChatDetailPlaceholder(
                 selectedCount: selection.count,
                 totalCount: chats.count,
-                sidecarVersion: sidecarVersion
+                sidecarVersion: sidecarVersion,
+                onBackUp: { activeSheet = .export },
+                onOpenBackup: { presentOpenArchivePicker() }
             )
         } else {
             // Match sidebar's loading/error state — keep the detail pane empty.
@@ -160,16 +162,12 @@ struct ContentView: View {
         }
     }
 
+    // The toolbar carries Back Up as a quick-access shortcut. Open Backup
+    // isn't here — it lives on the hero action card in the detail pane and
+    // in File menu → Open a Backup… (⌘O). Two separated toolbar icons on
+    // opposite corners felt scattered for non-technical users; the hero card
+    // is the modern way to surface primary actions.
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button {
-                presentOpenArchivePicker()
-            } label: {
-                Label("Open a Backup…", systemImage: "lock.doc")
-            }
-            .help("Open a saved imvault backup file")
-        }
-
         ToolbarItem(placement: .primaryAction) {
             Button {
                 activeSheet = .export
@@ -182,6 +180,7 @@ struct ContentView: View {
                 )
             }
             .disabled(selection.isEmpty)
+            .help("Save selected conversations as an encrypted backup")
         }
     }
 
